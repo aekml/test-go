@@ -1,0 +1,1387 @@
+<script>
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SHARED DOM HELPERS — global scope, used by both APP (Form 1) and APP2 (Form 2)
+// ══════════════════════════════════════════════════════════════════════════════
+function val(id)           { var e = document.getElementById(id); return e ? e.value.trim() : ''; }
+function setVal(id, value) { var e = document.getElementById(id); if (e) e.value = value; }
+function show(id)          { var e = document.getElementById(id); if (e) e.classList.remove('hidden'); }
+function hide(id)          { var e = document.getElementById(id); if (e) e.classList.add('hidden'); }
+function addOption(sel, text) {
+  var opt = document.createElement('option');
+  opt.value = text; opt.textContent = text;
+  sel.appendChild(opt);
+}
+function showLoader(msg) {
+  var e = document.getElementById('global_loader');
+  if (e) { e.textContent = msg || 'Loading…'; e.classList.remove('hidden'); }
+}
+function hideLoader() {
+  var e = document.getElementById('global_loader');
+  if (e) e.classList.add('hidden');
+}
+function showToast(msg, type) {
+  var e = document.getElementById('toast');
+  if (!e) return;
+  e.textContent = msg;
+  e.className = 'toast toast-' + (type || 'info');
+  e.classList.remove('hidden');
+  clearTimeout(e._t);
+  e._t = setTimeout(function () { e.classList.add('hidden'); }, 4500);
+}
+function onServerError(err) { showToast('Server error: ' + (err.message || err), 'error'); }
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(function (b)   { b.classList.remove('active'); });
+  document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.add('hidden'); });
+  var btn   = document.querySelector('[data-tab="' + tab + '"]');
+  var panel = document.getElementById('tab_' + tab);
+  if (btn)   btn.classList.add('active');
+  if (panel) panel.classList.remove('hidden');
+}
+function openDashboard() {
+  switchTab('dash');
+  if (typeof DASH !== 'undefined') DASH.boot();
+}
+function getRadioVal(name) {
+  var radios = document.querySelectorAll('input[name="' + name + '"]');
+  for (var i = 0; i < radios.length; i++) { if (radios[i].checked) return radios[i].value; }
+  return '';
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FORM 1 — Multi-Entry Engine with Full Back Navigation + Edit Any Entry
+//
+// Navigation stack:  s1 → s_gate1 → s_entry (loop) → s_after_entry
+// Within s_entry:    single merged panel_sec4 (Sections 4 & 5 combined)
+//
+// Back rules:
+//   s_gate1        ← unlocks S1+2+3, restores fields
+//   s_entry/sec4   ← if entry#1 → s_gate1 (retain Gate1 answer)
+//                    if entry#2+ → s_after_entry
+//   s_entry/sec4   ← single panel (merged)
+//   s_after_entry  ← edit-any-entry modal
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var APP = (function () {
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  var masters     = {};
+  var sharedData  = {};
+  var entryList   = [];   // committed entries
+  var draftEntry  = {};   // entry being filled
+  var editingIdx  = -1;   // -1 = new entry, >=0 = editing existing
+  var batchId     = null;
+  var submitting  = false;
+
+  // Tracks which inner panel is active inside s_entry
+  // Values: 'sec4' (single merged panel)
+  var activePanel = 'sec4';
+
+  // ── Bootstrap ──────────────────────────────────────────────────────────────
+  function formatPhoneInput() {
+    var el = document.getElementById('f1_officer_phone');
+    if (!el) return;
+    el.addEventListener('blur', function () {
+      var digits = el.value.replace(/\D/g, '').substring(0, 10);
+      if (digits.length === 10) el.value = digits;
+    });
+  }
+
+  function boot() {
+    showLoader('Loading…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        masters = data.masters || {};
+        hideLoader();
+        populateSubdivisionDropdown();
+        populateDistrictDropdown();
+        formatPhoneInput();
+        APP2.init(masters);
+        resetForm1();
+      })
+      .withFailureHandler(function (err) {
+        hideLoader();
+        showToast('Boot error: ' + err.message, 'error');
+      })
+      .getBootstrapData();
+  }
+
+  // ── Section visibility ─────────────────────────────────────────────────────
+  function showSection(id) {
+    document.querySelectorAll('.f1-section').forEach(function (el) {
+      el.classList.add('hidden');
+    });
+    var el = document.getElementById(id);
+    if (el) { el.classList.remove('hidden'); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }
+
+  function showInnerPanel(panelKey) {
+    // Sections 4 & 5 merged — single panel always shown
+    activePanel = 'sec4';
+    var p = document.getElementById('panel_sec4');
+    if (p) p.classList.remove('hidden');
+  }
+
+  function updateBackButton() {
+    var btn = document.getElementById('btn_back_entry');
+    if (!btn) return;
+    var labels = { sec4: '← Back to Officer & Location / Gate 1' };
+    btn.textContent = labels[activePanel] || '← Back';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BESCOM DROPDOWNS  (zone, circle, division, subdivision)
+  // ══════════════════════════════════════════════════════════════════════════
+  function populateSubdivisionDropdown() {
+    var sel = document.getElementById('f1_subdivision');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Select Subdivision —</option>';
+    var seen = {};
+    (masters.bescom || []).forEach(function (r) {
+      var v = r.subdivision || '';
+      if (v && !seen[v]) { seen[v] = 1; addOption(sel, v); }
+    });
+  }
+
+  function onSubdivisionChange() {
+    var sub = val('f1_subdivision');
+    var row = (masters.bescom || []).filter(function (r) { return r.subdivision === sub; })[0] || {};
+    setVal('f1_division', row.division || '');
+    setVal('f1_circle',   row.circle   || '');
+    setVal('f1_zone',     row.zone     || '');
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // GEO DROPDOWNS  (district → taluk)
+  // ══════════════════════════════════════════════════════════════════════════
+  function populateDistrictDropdown() {
+    var sel = document.getElementById('f1_district');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Select District —</option>';
+    var seen = {};
+    (masters.geo || []).forEach(function (r) {
+      var v = r.district || '';
+      if (v && !seen[v]) { seen[v] = 1; addOption(sel, v); }
+    });
+    var talukSel = document.getElementById('f1_taluk');
+    if (talukSel) talukSel.innerHTML = '<option value="">— Select Taluk —</option>';
+  }
+
+  function onDistrictChange() {
+    var dist = val('f1_district');
+    var sel  = document.getElementById('f1_taluk');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Select Taluk —</option>';
+    var seen = {};
+    (masters.geo || []).filter(function (r) { return r.district === dist; })
+      .forEach(function (r) {
+        var v = r.taluk || '';
+        if (v && !seen[v]) { seen[v] = 1; addOption(sel, v); }
+      });
+  }
+
+  function onRegionTypeChange() {
+    // Corporation and ULB/RLB dependency fields removed
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SECTION 1+2+3 — Confirm & lock
+  // ══════════════════════════════════════════════════════════════════════════
+  function confirmSharedData() {
+    var err = validateSection123();
+    if (err) { showToast(err, 'error'); return; }
+
+    sharedData = {
+      officer_name:     val('f1_officer_name'),
+      officer_phone:    val('f1_officer_phone'),
+      zone_name:        val('f1_zone'),
+      circle_name:      val('f1_circle'),
+      division_name:    val('f1_division'),
+      subdivision_name: val('f1_subdivision'),
+      district:         val('f1_district'),
+      taluk:            val('f1_taluk'),
+      region_type:      val('f1_region_type'),
+      corporation_name: '',
+      ulb_body:         ''
+    };
+
+    lockSharedFields();
+    if (!batchId) batchId = 'BATCH-' + Date.now();
+    showSection('s_gate1');
+  }
+
+  function lockSharedFields() {
+    ['f1_officer_name','f1_officer_phone','f1_subdivision','f1_division',
+     'f1_circle','f1_zone','f1_district','f1_taluk','f1_region_type'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.setAttribute('disabled', true);
+    });
+    var btn = document.getElementById('btn_confirm_shared');
+    if (btn) btn.setAttribute('disabled', true);
+  }
+
+  function unlockSharedFields() {
+    ['f1_officer_name','f1_officer_phone','f1_subdivision','f1_district',
+     'f1_taluk','f1_region_type'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.removeAttribute('disabled');
+    });
+    ['f1_division','f1_circle','f1_zone'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.removeAttribute('disabled');
+    });
+    var btn = document.getElementById('btn_confirm_shared');
+    if (btn) btn.removeAttribute('disabled');
+  }
+
+  function restoreSharedFields() {
+    setVal('f1_officer_name',  sharedData.officer_name     || '');
+    setVal('f1_officer_phone', sharedData.officer_phone    || '');
+    setVal('f1_subdivision',   sharedData.subdivision_name || '');
+    setVal('f1_division',      sharedData.division_name    || '');
+    setVal('f1_circle',        sharedData.circle_name      || '');
+    setVal('f1_zone',          sharedData.zone_name        || '');
+    setVal('f1_district',      sharedData.district         || '');
+    // Re-populate taluk for this district then set value
+    onDistrictChange();
+    setVal('f1_taluk',         sharedData.taluk            || '');
+    setVal('f1_region_type',   sharedData.region_type      || '');
+
+  }
+
+  // ── Back from Gate 1 → unlock S1+2+3 ──────────────────────────────────────
+  function backFromGate1() {
+    if (entryList.length > 0) {
+      if (!confirm('Going back will clear all ' + entryList.length + ' saved entr' + (entryList.length === 1 ? 'y' : 'ies') + '. Continue?')) return;
+      entryList = [];
+      var entryListEl = document.getElementById('entry_list');
+      if (entryListEl) entryListEl.innerHTML = '';
+    }
+    unlockSharedFields();
+    restoreSharedFields();
+    showSection('s1');
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // GATE 1
+  // ══════════════════════════════════════════════════════════════════════════
+	function onGate1Proceed() {
+	  var sel = document.getElementById('f1_gate1_sel');
+	  var choice = sel ? String(sel.value || '').trim().toLowerCase() : '';
+
+	  if (!choice) {
+		showToast('Please confirm if plot area is within 2880 sq ft.', 'error');
+		return;
+	  }
+
+	  if (choice === 'no') {
+		if (!confirm('You have indicated that plot area exceeds 2880 sq ft.\n\nSuch premises are NOT eligible for service under G.O.\nClick OK to acknowledge and reset the form.')) return;
+		showToast('Plot is Not Eligible for Service. Resetting form.', 'error');
+		setTimeout(function () { resetForm1(); }, 1800);
+		return;
+	  }
+
+	  sharedData = sharedData || {};
+	  sharedData.gate1eligible = choice;
+
+	  entryList = [];
+	  draftEntry = {};
+	  editingIdx = -1;
+	  startNewEntry();
+	}
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ENTRY LOOP
+  // ══════════════════════════════════════════════════════════════════════════
+  function startNewEntry() {
+    draftEntry = {};
+    editingIdx = -1;
+    updateEntryHeader(entryList.length + 1, false);
+    clearEntryFields();
+    showSection('s_entry');
+    showInnerPanel('sec4');
+    updateBackButton();
+  }
+
+  function startEditEntry(idx) {
+    var entry  = entryList[idx];
+    editingIdx = idx;
+    draftEntry = Object.assign({}, entry);
+    updateEntryHeader(idx + 1, true);
+    restoreEntryFields(entry);
+    showSection('s_entry');
+    showInnerPanel('sec4');
+    updateBackButton();
+  }
+
+  function updateEntryHeader(n, isEdit) {
+    var counter = document.getElementById('entry_counter');
+    var hint    = document.getElementById('entry_hint');
+    if (counter) counter.textContent = (isEdit ? 'Editing Entry #' : 'Application Entry #') + n;
+    if (hint)    hint.textContent    = isEdit
+      ? 'Editing a saved entry — changes will replace the original.'
+      : 'Sections 1–3 locked. Fill details for this application.';
+  }
+
+  function clearEntryFields() {
+    ['f1_app_no','f1_app_date','f1_no_of_floors','f1_no_of_connections',
+     'f1_total_kw','f1_date_of_service','f1_any_other_info'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+  }
+
+  function restoreEntryFields(entry) {
+    setVal('f1_app_no',            entry.app_no              || '');
+    setVal('f1_app_date',          entry.app_date            || '');
+    setVal('f1_no_of_floors',      entry.no_of_floors        || '');
+    setVal('f1_plot_sqft',         entry.plot_sqft           || '');
+    setVal('f1_no_of_connections', entry.no_of_connections   || '');
+    setVal('f1_total_kw',          entry.total_sanctioned_kw || '');
+    setVal('f1_date_of_service',   entry.date_of_service     || '');
+    setVal('f1_any_other_info',    entry.any_other_info      || '');
+  }
+
+  // ── Back navigation inside entry ───────────────────────────────────────────
+  function backInEntry() {
+    if (entryList.length === 0 || editingIdx === 0) {
+      showSection('s_gate1');
+    } else {
+      draftEntry = {};
+      editingIdx = -1;
+      showSection('s_after_entry');
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── CONTINUE SEC4 → GATE 2 ───────────────────────────────────────────────
+  // continueToSection5 removed — sections 4 & 5 merged into single panel
+
+  // GATES
+  // ══════════════════════════════════════════════════════════════════════════
+  // onGate2 removed — Gate 2 (building_ready) no longer in flow
+
+  // onGate3Submit removed — plot size now collected once at Gate 1 as a shared batch field
+
+  function onSection5Submit() {
+    var err = validateSection4();
+    if (err) {
+      showToast(err, 'error');
+      var hint = document.getElementById('entry_validation_hint');
+      if (hint) { hint.textContent = err; hint.classList.remove('hidden'); }
+      return;
+    }
+    var hint = document.getElementById('entry_validation_hint');
+    if (hint) hint.classList.add('hidden');
+    collectSection4();
+    draftEntry.entry_flag = 'SERVICED';
+    completeEntry();
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // COMPLETE / EDIT ENTRY
+  // ══════════════════════════════════════════════════════════════════════════
+  function completeEntry() {
+    var entry = Object.assign({}, sharedData, draftEntry, { form_key: 'FORM1', batch_id: batchId });
+
+    if (editingIdx >= 0) {
+      // Replace existing
+      entryList[editingIdx] = entry;
+    } else {
+      // Add new
+      entryList.push(entry);
+    }
+
+    editingIdx = -1;
+    draftEntry = {};
+    rebuildEntryList();
+    showSection('s_after_entry');
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // AFTER-ENTRY SCREEN
+  // ══════════════════════════════════════════════════════════════════════════
+  function addAnotherEntry() {
+    startNewEntry();
+  }
+
+  function submitAll() {
+    if (submitting) return;
+    if (!entryList.length) { showToast('No entries to submit.', 'error'); return; }
+    submitting = true;
+    showLoader('Submitting ' + entryList.length + ' entr' + (entryList.length === 1 ? 'y' : 'ies') + '…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        submitting = false;
+        hideLoader();
+        if (!res.success) {
+          var msgs = (res.errors || []).map(function (e) { return 'Row ' + e.row + ': ' + e.message; }).join('\n');
+          showToast('Some entries failed:\n' + msgs, 'error');
+          return;
+        }
+        showToast('✓ ' + res.count + ' entr' + (res.count === 1 ? 'y' : 'ies') + ' submitted!', 'success');
+        setTimeout(function () { resetForm1(); }, 1800);
+      })
+      .withFailureHandler(function (err) {
+        submitting = false;
+        hideLoader();
+        onServerError(err);
+      })
+      .submitBatch('FORM1', entryList);
+  }
+
+  // ── Entry card list ────────────────────────────────────────────────────────
+  function rebuildEntryList() {
+    var container = document.getElementById('entry_list');
+    if (!container) return;
+    container.innerHTML = '';
+    entryList.forEach(function (entry, idx) {
+      container.appendChild(buildEntryCard(entry, idx));
+    });
+  }
+
+  function buildEntryCard(entry, idx) {
+    var flagColors = { SERVICED: '#16a34a' };
+    var color = flagColors[entry.entry_flag] || '#374151';
+    var card  = document.createElement('div');
+    card.className = 'entry-card';
+    card.innerHTML =
+      '<div class="entry-card-header">' +
+        '<span class="entry-num">Entry #' + (idx + 1) + '</span>' +
+        '<span class="entry-flag" style="color:' + color + '">' + (entry.entry_flag || '') + '</span>' +
+        '<button class="btn-edit-entry" onclick="APP.editEntry(' + idx + ')" title="Edit this entry">✏ Edit</button>' +
+      '</div>' +
+      '<div class="entry-detail">App No: <strong>' + (entry.app_no || '—') + '</strong>' +
+        ' &nbsp;|&nbsp; App Date: <strong>' + (entry.app_date || '—') + '</strong></div>' +
+      (entry.plot_sqft    ? '<div class="entry-detail">Plot: <strong>' + entry.plot_sqft + ' sq ft</strong></div>' : '') +
+      (entry.no_of_floors ? '<div class="entry-detail">Floors: <strong>' + entry.no_of_floors +
+        '</strong> &nbsp;|&nbsp; Connections: <strong>' + (entry.no_of_connections || '—') + '</strong>' +
+        (entry.date_of_service ? ' &nbsp;|&nbsp; Serviced: <strong>' + entry.date_of_service + '</strong>' : '') +
+        '</div>' : '') +
+      (entry.any_other_info ? '<div class="entry-detail" style="color:#6b7280;font-size:0.82em">Note: ' + entry.any_other_info + '</div>' : '');
+    return card;
+  }
+
+  function editEntry(idx) {
+    startEditEntry(idx);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RESET
+  // ══════════════════════════════════════════════════════════════════════════
+  function resetForm1() {
+    sharedData = {}; entryList = []; draftEntry = {}; editingIdx = -1;
+    batchId = null; submitting = false; activePanel = 'sec4';
+
+    unlockSharedFields();
+    ['f1_officer_name','f1_officer_phone','f1_subdivision','f1_district',
+     'f1_taluk','f1_region_type',
+     'f1_plot_sqft','f1_app_no','f1_app_date',
+     'f1_no_of_floors','f1_no_of_connections','f1_total_kw',
+     'f1_date_of_service','f1_any_other_info'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    ['f1_division','f1_circle','f1_zone'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    var entryListEl = document.getElementById('entry_list');
+    if (entryListEl) entryListEl.innerHTML = '';
+    var hint = document.getElementById('entry_validation_hint');
+    if (hint) { hint.textContent = ''; hint.classList.add('hidden'); }
+    showSection('s1');
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // VALIDATION
+  // ══════════════════════════════════════════════════════════════════════════
+  function validateSection123() {
+    if (!val('f1_officer_name'))  return 'Officer Name is required.';
+    if (!val('f1_officer_phone')) return 'Officer Phone is required.';
+    var phone = val('f1_officer_phone').replace(/\D/g, '');
+    if (phone.length !== 10) return 'Officer Phone must be a 10-digit mobile number.';
+    if (!val('f1_subdivision'))   return 'Subdivision is required.';
+    if (!val('f1_district'))      return 'District is required.';
+    if (!val('f1_taluk'))         return 'Taluk is required.';
+    if (!val('f1_region_type'))   return 'Region Type is required.';
+    return null;
+  }
+  function validateSection4() {
+    var appRaw = val('f1_app_no');
+    if (!appRaw)            return 'Application Number is required.';
+    var appDigits = appRaw.replace(/[^0-9]/g, '');
+    if (!appDigits)         return 'Application Number must contain only digits.';
+    if (appDigits.length > 12) return 'Application Number cannot exceed 12 digits.';
+    var dupInBatch = entryList.some(function(e, idx){
+      if (editingIdx >= 0 && idx === editingIdx) return false;
+      var existing = String(e.app_no || '').replace(/[^0-9]/g,'');
+      return existing && existing === appDigits;
+    });
+    if (dupInBatch)         return 'Application Number is already used in this batch.';
+    if (!val('f1_app_no'))            return 'Application Number is required.';
+    if (!val('f1_app_date'))          return 'Application Date is required.';
+    if (!val('f1_no_of_floors'))      return 'Number of Floors is required.';
+    var ps = parseFloat(val('f1_plot_sqft') || 0);
+    if (!ps || ps <= 0) return 'Plot Size is required.';
+	if (sharedData && sharedData.gate1eligible === 'yes' && ps > 2880) {
+	  return 'Plot size must be 2880 sq ft or less, as confirmed in Gate 1.';
+	}
+    var connsRaw = val('f1_no_of_connections');
+    if (!connsRaw)                    return 'Number of Connections is required.';
+    if (parseFloat(connsRaw) <= 0)    return 'Number of Connections must be greater than zero.';
+    var dos = val('f1_date_of_service');
+    if (!dos)                         return 'Date of Service is required.';
+    if (dos < '2026-06-06')           return 'Date of Service cannot be earlier than 06.06.2026.';
+    return null;
+  }
+  // validateSection5 removed — merged into validateSection4
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // COLLECT
+  // ══════════════════════════════════════════════════════════════════════════
+  function collectSection4() {
+    draftEntry.app_no              = val('f1_app_no');
+    draftEntry.app_date            = val('f1_app_date');
+    draftEntry.no_of_floors        = val('f1_no_of_floors');
+    draftEntry.plot_sqft           = val('f1_plot_sqft');
+    draftEntry.no_of_connections   = val('f1_no_of_connections');
+    draftEntry.total_sanctioned_kw = val('f1_total_kw');
+    draftEntry.date_of_service     = val('f1_date_of_service');
+    draftEntry.any_other_info      = val('f1_any_other_info');
+  }
+  // collectSection5 removed — merged into collectSection4
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── Public API ──────────────────────────────────────────────────────────────
+  return {
+    boot:                 boot,
+    onSubdivisionChange:  onSubdivisionChange,
+    onDistrictChange:     onDistrictChange,
+    onRegionTypeChange:   onRegionTypeChange,
+    confirmSharedData:    confirmSharedData,
+    backFromGate1:        backFromGate1,
+    onGate1Proceed:       onGate1Proceed,
+    backInEntry:          backInEntry,
+
+    onSection5Submit:     onSection5Submit,
+    addAnotherEntry:      addAnotherEntry,
+    editEntry:            editEntry,
+    submitAll:            submitAll,
+    switchTab:            switchTab,
+    openDashboard:        openDashboard
+  };
+
+})();
+
+document.addEventListener('DOMContentLoaded', APP.boot);
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FORM 2 — Survey Engine
+// Navigation: f2_s1 → f2_s4 → f2_s5 → after-entry → batch submit
+// Pre-fill: if APP.sharedData is populated (redirected from Form 1 Gate 1=No),
+//           lock Section 1+2+3 fields automatically.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var APP2 = (function () {
+
+  var masters     = {};   // shared from APP.masters via init()
+  var sharedData  = {};
+  var entryList   = [];
+  var draftEntry  = {};
+  var editingIdx  = -1;
+  var submitting  = false;
+
+  // ── Init (called by APP after boot, passes masters reference) ─────────────
+  function init(mastersRef) {
+    masters = mastersRef || {};
+    populateSubdivisionDropdown();
+    populateDistrictDropdown();
+  }
+
+  // ── Pre-fill from Form 1 shared data (Gate 1 = No redirect) ──────────────
+  function prefillFromForm1(sd) {
+    if (!sd || !sd.officer_name) return;
+    sharedData = sd;
+    setVal('f2_officer_name',  sd.officer_name);
+    setVal('f2_officer_phone', sd.officer_phone);
+    setVal('f2_subdivision',   sd.subdivision_name);
+    setVal('f2_division',      sd.division_name);
+    setVal('f2_circle',        sd.circle_name);
+    setVal('f2_zone',          sd.zone_name);
+    setVal('f2_district',      sd.district);
+    // Rebuild taluk dropdown for the pre-filled district then set taluk
+    onDistrictChange();
+    setVal('f2_taluk',         sd.taluk);
+    setVal('f2_region_type',   sd.region_type);
+    onRegionTypeChange();
+
+    lockSharedFields();
+    // Auto-advance to S4
+    showF2Section('f2_s4');
+  }
+
+  // ── Section visibility ────────────────────────────────────────────────────
+  function showF2Section(id) {
+    document.querySelectorAll('.f2-section').forEach(function (el) {
+      el.classList.add('hidden');
+    });
+    var el = document.getElementById(id);
+    if (el) { el.classList.remove('hidden'); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }
+
+  // ── BESCOM dropdowns ─────────────────────────────────────────────────────
+  function populateSubdivisionDropdown() {
+    var sel = document.getElementById('f2_subdivision');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Select Subdivision —</option>';
+    var seen = {};
+    (masters.bescom || []).forEach(function (r) {
+      var v = r.subdivision || '';
+      if (v && !seen[v]) { seen[v] = 1; addOption(sel, v); }
+    });
+  }
+
+  function onSubdivisionChange() {
+    var sub = val('f2_subdivision');
+    var row = (masters.bescom || []).filter(function (r) { return r.subdivision === sub; })[0] || {};
+    setVal('f2_division', row.division || '');
+    setVal('f2_circle',   row.circle   || '');
+    setVal('f2_zone',     row.zone     || '');
+  }
+
+  // ── GEO dropdowns ────────────────────────────────────────────────────────
+  function populateDistrictDropdown() {
+    var sel = document.getElementById('f2_district');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Select District —</option>';
+    var seen = {};
+    (masters.geo || []).forEach(function (r) {
+      var v = r.district || '';
+      if (v && !seen[v]) { seen[v] = 1; addOption(sel, v); }
+    });
+    var talukSel = document.getElementById('f2_taluk');
+    if (talukSel) talukSel.innerHTML = '<option value="">— Select Taluk —</option>';
+  }
+
+  function onDistrictChange() {
+    var dist = val('f2_district');
+    var sel  = document.getElementById('f2_taluk');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Select Taluk —</option>';
+    var seen = {};
+    (masters.geo || []).filter(function (r) { return r.district === dist; })
+      .forEach(function (r) {
+        var v = r.taluk || '';
+        if (v && !seen[v]) { seen[v] = 1; addOption(sel, v); }
+      });
+  }
+
+  function onRegionTypeChange() {
+    // Corporation and ULB/RLB dependency fields removed
+  }
+
+  // ── Section 1+2+3 lock/unlock ─────────────────────────────────────────────
+  function lockSharedFields() {
+    ['f2_officer_name','f2_officer_phone','f2_subdivision','f2_division',
+     'f2_circle','f2_zone','f2_district','f2_taluk','f2_region_type'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.setAttribute('disabled', true);
+    });
+    var btn = document.getElementById('f2_btn_confirm_shared');
+    if (btn) btn.setAttribute('disabled', true);
+  }
+
+  function unlockSharedFields() {
+    ['f2_officer_name','f2_officer_phone','f2_subdivision','f2_district',
+     'f2_taluk','f2_region_type',
+     'f2_division','f2_circle','f2_zone'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.removeAttribute('disabled');
+    });
+    var btn = document.getElementById('f2_btn_confirm_shared');
+    if (btn) btn.removeAttribute('disabled');
+  }
+
+  // ── confirmSharedData ─────────────────────────────────────────────────────
+  function confirmSharedData() {
+    var err = validateS123();
+    if (err) { showToast(err, 'error'); return; }
+    sharedData = {
+      officer_name:     val('f2_officer_name'),
+      officer_phone:    val('f2_officer_phone'),
+      zone_name:        val('f2_zone'),
+      circle_name:      val('f2_circle'),
+      division_name:    val('f2_division'),
+      subdivision_name: val('f2_subdivision'),
+      district:         val('f2_district'),
+      taluk:            val('f2_taluk'),
+      region_type:      val('f2_region_type'),
+      corporation_name: '',
+      ulb_body:         ''
+    };
+    entryList = [];
+    draftEntry = {};
+    editingIdx = -1;
+    lockSharedFields();
+    clearEntryFields();
+    showF2Section('f2_s4');
+  }
+
+  // ── Back navigation ───────────────────────────────────────────────────────
+  function backToS1() {
+    unlockSharedFields();
+    sharedData = {};
+    showF2Section('f2_s1');
+  }
+
+  function backToS4() {
+    showF2Section('f2_s4');
+  }
+
+  // ── Plot category hint ────────────────────────────────────────────────────
+  function onPlotCategoryChange() {
+    var cat   = val('f2_plot_category');
+    var hint  = document.getElementById('f2_plot_sqft_hint');
+    var input = document.getElementById('f2_plot_sqft');
+    var hints = {
+      'upto_2880':    'Enter value up to 2880 sq ft',
+      '2881_to_4000': 'Enter value between 2881 – 4000 sq ft',
+      'beyond_4000':  'Enter value above 4000 sq ft'
+    };
+    if (hint)  hint.textContent = hints[cat] || '';
+    if (input) { input.min = cat === 'beyond_4000' ? '4001' : cat === '2881_to_4000' ? '2881' : '1'; }
+
+    var wrap = document.getElementById('f2_conn_load_wrap');
+    if (cat === 'upto_2880') {
+      if (wrap) wrap.classList.remove('hidden');
+    } else {
+      if (wrap) wrap.classList.add('hidden');
+      setVal('f2_expected_connections', '');
+      setVal('f2_expected_load_kw', '');
+    }
+  }
+
+    function updateEligibilityHint() {
+    var cat  = val('f2_plot_category');
+    var fl   = val('f2_no_of_floors');
+    var el   = document.getElementById('f2_elig_hint');
+    if (!el || !cat || !fl) { if (el) el.textContent = ''; return; }
+    var eligibleFloors = ['Ground','G+1','G+2','G+3','S+1','S+2','S+3','S+4'];
+    var isEligible = (cat === 'upto_2880') && (eligibleFloors.indexOf(fl) !== -1);
+    el.textContent = isEligible
+      ? 'This plot will be marked as ELIGIBLE for G.O compliance.'
+      : 'This plot will be marked as NOT-ELIGIBLE for G.O compliance.';
+  }
+
+// ── Temp connection toggle ────────────────────────────────────────────────
+  function onTempConnChange() {
+    var radios = document.querySelectorAll('input[name="f2_temp_conn"]');
+    var val2 = '';
+    radios.forEach(function (r) { if (r.checked) val2 = r.value; });
+    if (val2 === 'Yes') { show('f2_temp_details'); }
+    else                { hide('f2_temp_details'); clearTempFields(); }
+  }
+
+  function clearTempFields() {
+    setVal('f2_temp_account_id', '');
+    setVal('f2_app_reg_date',    '');
+  }
+
+  // ── S4 → S5 ───────────────────────────────────────────────────────────────
+  function goToS5() {
+    var err = validateS4();
+    if (err) { showToast(err, 'error'); return; }
+    showF2Section('f2_s5');
+  }
+
+  // ── Submit ────────────────────────────────────────────────────────────────
+  function submitForm2() {
+    if (submitting) return;
+    var err = validateS5();
+    if (err) { showToast(err, 'error'); return; }
+
+    var tempConn = getRadioVal('f2_temp_conn');
+    var payload = Object.assign({}, sharedData, {
+      form_key:             'FORM2',
+      plot_category:        val('f2_plot_category'),
+      plot_sqft:            val('f2_plot_sqft'),
+      no_of_floors:         val('f2_no_of_floors'),
+      expected_connections: val('f2_expected_connections'),
+      expected_load_kw:     val('f2_expected_load_kw'),
+      temp_conn_applied:    tempConn,
+      temp_account_id:      tempConn === 'Yes' ? val('f2_temp_account_id') : '',
+      app_reg_date:         tempConn === 'Yes' ? val('f2_app_reg_date')    : '',
+      bldg_ready_occupied:  getRadioVal('f2_bldg_ready'),
+      remarks:              val('f2_remarks')
+    });
+
+    submitting = true;
+    showLoader('Submitting survey…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        submitting = false; hideLoader();
+        if (!res.success) { showToast('Error: ' + (res.error || 'Submission failed'), 'error'); return; }
+        showToast('✓ Survey submitted! Record: ' + res.record_id, 'success');
+        setTimeout(function () { resetForm2(); }, 2000);
+      })
+      .withFailureHandler(function (err) {
+        submitting = false; hideLoader();
+        showToast('Server error: ' + err.message, 'error');
+      })
+      .submitForm(payload);
+  }
+
+  // ── Reset ─────────────────────────────────────────────────────────────────
+  function resetForm2() {
+    entryList = [];
+    draftEntry = {};
+    editingIdx = -1;
+    sharedData = {}; submitting = false;
+    unlockSharedFields();
+    ['f2_officer_name','f2_officer_phone','f2_subdivision','f2_district',
+     'f2_taluk','f2_region_type',
+     'f2_division','f2_circle','f2_zone',
+     'f2_plot_category','f2_plot_sqft','f2_no_of_floors',
+     'f2_expected_connections','f2_expected_load_kw',
+     'f2_temp_account_id','f2_app_reg_date','f2_remarks'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    document.querySelectorAll('input[name="f2_temp_conn"], input[name="f2_bldg_ready"]')
+      .forEach(function (r) { r.checked = false; });
+    hide('f2_temp_details');
+    var hint = document.getElementById('f2_plot_sqft_hint');
+    if (hint) hint.textContent = '';
+    showF2Section('f2_s1');
+  }
+
+  // ── Validation ────────────────────────────────────────────────────────────
+  function validateS123() {
+    if (!val('f2_officer_name'))  return 'Officer Name is required.';
+    if (!val('f2_officer_phone')) return 'Officer Phone is required.';
+    var phone = val('f2_officer_phone').replace(/\D/g, '');
+    if (phone.length !== 10) return 'Officer Phone must be a 10-digit mobile number.';
+    if (!val('f2_subdivision'))   return 'Subdivision is required.';
+    if (!val('f2_district'))      return 'District is required.';
+    if (!val('f2_taluk'))         return 'Taluk is required.';
+    if (!val('f2_region_type'))   return 'Region Type is required.';
+    return null;
+  }
+
+  function validateS4() {
+    if (!val('f2_plot_category'))        return 'Plot Category is required.';
+    var sqft = parseFloat(val('f2_plot_sqft'));
+    if (!sqft || sqft <= 0)              return 'Plot Area is required.';
+    var cat = val('f2_plot_category');
+    if (cat === 'upto_2880' && sqft > 2880)
+      return 'Plot area exceeds 2880 sq ft for selected category.';
+    // For 2881+ categories, only ensure area is present; range checks removed to match GO rules.
+    if (!val('f2_no_of_floors'))         return 'No. of Floors is required.';
+    if (cat === 'upto_2880') {
+      if (!val('f2_expected_connections')) return 'Expected No. of Connections is required.';
+      if (!val('f2_expected_load_kw'))     return 'Expected Load (kW) is required.';
+    }
+    return null;
+  }
+
+  function validateS5() {
+    var tempConn = getRadioVal('f2_temp_conn');
+    if (!tempConn) return 'Please answer: Applied for Temporary Connection?';
+    if (tempConn === 'Yes') {
+      if (!val('f2_temp_account_id')) return 'Temporary Account ID is required.';
+      if (!val('f2_app_reg_date'))    return 'Application Registration Date is required.';
+      var d = new Date(val('f2_app_reg_date'));
+      if (d > new Date('2026-05-31')) return 'Application Registration Date cannot be beyond 31.05.2026.';
+    }
+    if (!getRadioVal('f2_bldg_ready')) return 'Please answer: Is building ready to be occupied?';
+    return null;
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  return {
+    init:                init,
+    prefillFromForm1:    prefillFromForm1,
+    onSubdivisionChange: onSubdivisionChange,
+    onDistrictChange:    onDistrictChange,
+    onRegionTypeChange:  onRegionTypeChange,
+    onPlotCategoryChange:onPlotCategoryChange,
+    onTempConnChange:    onTempConnChange,
+    confirmSharedData:   confirmSharedData,
+    backToS1:            backToS1,
+    backToS4:            backToS4,
+    goToS5:              goToS5,
+    submitForm2:         submitForm2,
+    resetForm2:          resetForm2
+  };
+}());
+
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DASH — Dashboard controller
+// ══════════════════════════════════════════════════════════════════════════════
+var DASH = (function () {
+
+  var dateFilter = { from: '', to: '' };
+  'use strict';
+
+  // ── state ─────────────────────────────────────────────────────────────────
+  var cache   = { FORM1: null, FORM2: null };
+  var charts  = {};          // Chart.js instances keyed by canvas id
+  var recentData   = [];     // full (up to 100) rows for recent table
+  var recentPage   = 1;
+  var recentPageSz = 20;
+
+  // ── palette ───────────────────────────────────────────────────────────────
+  var PAL = ['#1d4ed8','#16a34a','#d97706','#dc2626','#0d9488','#7c3aed',
+             '#0891b2','#db2777','#65a30d','#ea580c'];
+  function pal(i) { return PAL[i % PAL.length]; }
+
+  // ── sub-tab switch ────────────────────────────────────────────────────────
+  function switchSub(sub) {
+    document.querySelectorAll('.dash-subtab').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.dash-sub').forEach(function(p) { p.classList.add('hidden'); });
+    var btn = document.querySelector('[data-dash="' + sub + '"]');
+    var panel = document.getElementById('dash_' + sub);
+    if (btn)   btn.classList.add('active');
+    if (panel) panel.classList.remove('hidden');
+
+    if (sub === 'f1'     && !cache.FORM1)  loadData('FORM1');
+    if (sub === 'f2'     && !cache.FORM2)  loadData('FORM2');
+    if (sub === 'recent' && !recentData.length) loadRecent();
+  }
+
+  // ── boot (called when dashboard outer tab is first shown) ─────────────────
+  function boot() {
+    if (!cache.FORM1) loadData('FORM1');
+  }
+
+  // ── load dashboard data ───────────────────────────────────────────────────
+  function loadData(formKey) {
+    var prefix = formKey === 'FORM1' ? 'f1' : 'f2';
+    showSkeleton(prefix);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res || !res.success) {
+          showToast('Dashboard error: ' + (res && res.error ? res.error : 'Unknown'), 'error');
+          return;
+        }
+        cache[formKey] = res;
+        renderKPIs(formKey, res.kpi);
+        renderGeoChart(formKey);
+        renderRegionChart(formKey);
+        renderTimeChart(formKey);
+        if (formKey === 'FORM1') {
+          renderFlagChart();
+          renderAppRegChart();
+        } else {
+          renderPlotCatChart();
+          renderEligibilityChart();
+          renderTempConnChart();
+        }
+        var updEl = document.getElementById('dash_' + prefix + '_updated');
+        if (updEl) updEl.textContent = 'Updated ' + new Date().toLocaleTimeString();
+      })
+      .withFailureHandler(function(err) {
+        showToast('Dashboard load failed: ' + err.message, 'error');
+      })
+      .getDashboardData(formKey, dateFilter.from, dateFilter.to);
+  }
+
+  function refresh(formKey) {
+    cache[formKey] = null;
+    loadData(formKey);
+  }
+
+  // ── skeleton ──────────────────────────────────────────────────────────────
+  function showSkeleton(prefix) {
+    var el = document.getElementById('dash_' + prefix + '_kpi');
+    if (!el) return;
+    var count = prefix === 'f1' ? 3 : 5;
+    el.innerHTML = '';
+    for (var i = 0; i < count; i++) {
+      var d = document.createElement('div');
+      d.className = 'kpi-skeleton';
+      el.appendChild(d);
+    }
+  }
+
+  // ── KPI rendering ─────────────────────────────────────────────────────────
+  function kpiCard(label, value, sub, accentClass) {
+    return '<div class="kpi-card ' + accentClass + '">' +
+      '<div class="kpi-label">' + label + '</div>' +
+      '<div class="kpi-value" data-target="' + value + '">0</div>' +
+      (sub ? '<div class="kpi-sub">' + sub + '</div>' : '') +
+      '</div>';
+  }
+
+  function renderKPIs(formKey, kpi) {
+    var prefix = formKey === 'FORM1' ? 'f1' : 'f2';
+    var el = document.getElementById('dash_' + prefix + '_kpi');
+    if (!el) return;
+    var html = '';
+    if (formKey === 'FORM1') {
+      html += kpiCard('Buildings Serviced',          kpi.total_buildings,      'Total entries',               'kpi-accent-blue');
+      html += kpiCard('Connections',                 kpi.total_connections,    'no_of_connections',           'kpi-accent-green');
+      html += kpiCard('Total Load (kW)',             kpi.total_load_kw,        'total_sanctioned_kw',         'kpi-accent-teal');
+    } else {
+      html += kpiCard('Buildings Surveyed',          kpi.total_buildings,      'Total entries',                         'kpi-accent-blue');
+      html += kpiCard('Plots up to 2880 sq ft',      kpi.plots_upto_2880,      'plot_category = upto_2880',             'kpi-accent-teal');
+      html += kpiCard('Eligible Plots (by floors)',  kpi.eligible_floor_plots, 'Ground/G+1–3, S+1–4 within upto_2880', 'kpi-accent-green');
+      html += kpiCard('Eligible Temp Applied — Yes', kpi.eligible_temp_yes,    'eligible & temp=Yes',                   'kpi-accent-orange');
+      html += kpiCard('Eligible Temp Applied — No',  kpi.eligible_temp_no,     'eligible & temp≠Yes',                   'kpi-accent-orange');
+    }
+    el.innerHTML = html;
+    // animate count-up
+    el.querySelectorAll('.kpi-value').forEach(function(v) {
+      animateCount(v, parseFloat(v.getAttribute('data-target')) || 0);
+    });
+  }
+
+  function animateCount(el, target) {
+    var start = 0, dur = 700, startTime = null;
+    var isFloat = target !== Math.floor(target);
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      var prog = Math.min((ts - startTime) / dur, 1);
+      var ease = 1 - Math.pow(1 - prog, 3);
+      var val = start + (target - start) * ease;
+      el.textContent = isFloat ? val.toFixed(1) : Math.round(val).toLocaleString();
+      if (prog < 1) requestAnimationFrame(step);
+      else el.textContent = isFloat ? target.toFixed(1) : target.toLocaleString();
+    }
+    requestAnimationFrame(step);
+  }
+
+  // ── chart helpers ─────────────────────────────────────────────────────────
+  function destroyChart(id) {
+    if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+  }
+
+  function makeHBar(id, labels, values, label) {
+    destroyChart(id);
+    var ctx = document.getElementById(id);
+    if (!ctx) return;
+    charts[id] = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{ label: label || 'Count', data: values,
+          backgroundColor: labels.map(function(_,i){ return pal(i); }),
+          borderRadius: 4 }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false },
+                   tooltip: { callbacks: { label: function(c){ return ' '+c.parsed.x.toLocaleString(); } } } },
+        scales: { x: { beginAtZero: true, ticks: { font: { size: 11 } } },
+                  y: { ticks: { font: { size: 11 } } } }
+      }
+    });
+  }
+
+  function makeDoughnut(id, labels, values) {
+    destroyChart(id);
+    var ctx = document.getElementById(id);
+    if (!ctx) return;
+    charts[id] = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: labels,
+        datasets: [{ data: values,
+          backgroundColor: labels.map(function(_,i){ return pal(i); }),
+          borderWidth: 2, borderColor: '#fff' }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { size: 11 }, boxWidth: 12, padding: 10 } },
+          tooltip: { callbacks: { label: function(c){
+            var total = c.dataset.data.reduce(function(a,b){ return a+b; },0);
+            var pct = total ? Math.round(c.parsed/total*100) : 0;
+            return ' '+c.label+': '+c.parsed.toLocaleString()+' ('+pct+'%)';
+          }}}
+        }
+      }
+    });
+  }
+
+  function makeLine(id, labels, values) {
+    destroyChart(id);
+    var ctx = document.getElementById(id);
+    if (!ctx) return;
+    charts[id] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{ label: 'Submissions', data: values,
+          borderColor: '#1d4ed8', backgroundColor: 'rgba(29,78,216,.1)',
+          fill: true, tension: 0.35, pointRadius: 3, pointHoverRadius: 5 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { font: { size: 10 }, maxRotation: 45 } },
+          y: { beginAtZero: true, ticks: { font: { size: 11 } } }
+        }
+      }
+    });
+  }
+
+  function makeStackedBar(id, labels, ds1vals, ds2vals, ds1label, ds2label) {
+    destroyChart(id);
+    var ctx = document.getElementById(id);
+    if (!ctx) return;
+    charts[id] = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: ds1label, data: ds1vals, backgroundColor: '#16a34a', borderRadius: 4 },
+          { label: ds2label, data: ds2vals, backgroundColor: '#dc2626', borderRadius: 4 }
+        ]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, boxWidth: 12 } } },
+        scales: {
+          x: { stacked: true, beginAtZero: true, ticks: { font: { size: 11 } } },
+          y: { stacked: true, ticks: { font: { size: 11 } } }
+        }
+      }
+    });
+  }
+
+  // ── chart renderers ───────────────────────────────────────────────────────
+  function renderGeoChart(formKey) {
+    if (!cache[formKey]) return;
+    var prefix = formKey === 'FORM1' ? 'f1' : 'f2';
+    var sel = document.getElementById(prefix + '_geo_sel');
+    var level = sel ? sel.value : 'circle';
+    var key = 'by_' + level;
+    var d = cache[formKey].charts[key] || { labels: [], values: [] };
+    makeHBar(prefix + '_geo_chart', d.labels, d.values, 'Submissions');
+  }
+
+  function renderFlagChart() {
+    if (!cache.FORM1) return;
+    var d = cache.FORM1.charts.entry_flag || { labels: [], values: [] };
+    makeDoughnut('f1_flag_chart', d.labels, d.values);
+  }
+
+  function renderRegionChart(formKey) {
+    if (!cache[formKey]) return;
+    var prefix = formKey === 'FORM1' ? 'f1' : 'f2';
+    var d = cache[formKey].charts.region_type || { labels: [], values: [] };
+    makeDoughnut(prefix + '_region_chart', d.labels, d.values);
+  }
+
+  function renderTimeChart(formKey) {
+    if (!cache[formKey]) return;
+    var prefix = formKey === 'FORM1' ? 'f1' : 'f2';
+    var d = cache[formKey].charts.over_time || { labels: [], values: [] };
+    makeLine(prefix + '_time_chart', d.labels, d.values);
+  }
+
+  function renderPlotCatChart() {
+    if (!cache.FORM2) return;
+    var d = cache.FORM2.charts.plot_category || { labels: [], values: [] };
+    makeDoughnut('f2_plotcat_chart', d.labels, d.values);
+  }
+
+  function renderEligibilityChart() {
+    if (!cache.FORM2) return;
+    var d = cache.FORM2.charts.eligibility_flag || { labels: [], values: [] };
+    makeDoughnut('f2_elig_chart', d.labels, d.values);
+  }
+
+  function renderTempConnChart() {
+    if (!cache.FORM2) return;
+    var d = cache.FORM2.charts.temp_conn || { labels: [], values: [] };
+    makeDoughnut('f2_tempconn_chart', d.labels, d.values);
+  }
+
+  function renderAppRegChart() {
+    if (!cache.FORM1) return;
+    var sel = document.getElementById('f1_appreg_sel');
+    var level = sel ? sel.value : 'circle';
+    var key = level === 'circle' ? 'app_reg_by_circle' : 'app_reg_by_div';
+    var d = cache.FORM1.charts[key] || { labels: [], registered: [], not_registered: [] };
+    makeStackedBar('f1_appreg_chart', d.labels, d.registered, d.not_registered,
+                   'Registered', 'Not Registered');
+  }
+
+  // ── Recent submissions ────────────────────────────────────────────────────
+  function loadRecent() {
+    var filters = {
+      form:      document.getElementById('rf_form')     ? document.getElementById('rf_form').value     : 'all',
+      circle:    document.getElementById('rf_circle')   ? document.getElementById('rf_circle').value   : '',
+      division:  document.getElementById('rf_division') ? document.getElementById('rf_division').value : '',
+      date_from: dateFilter.from,
+      date_to:   dateFilter.to
+    };
+    var tbody = document.getElementById('recent_tbody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="table-empty">Loading…</td></tr>';
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res || !res.success) {
+          showToast('Recent load failed', 'error'); return;
+        }
+        recentData = res.rows || [];
+        recentPage = 1;
+        // populate circle filter
+        populateCircleFilter(recentData);
+        populateDivisionFilter(recentData);
+        renderRecentTable();
+        var cnt = document.getElementById('dash_recent_count');
+        if (cnt) cnt.textContent = '(showing ' + Math.min(recentData.length, 100) + ' of ' + res.total + ')';
+      })
+      .withFailureHandler(function(err) { showToast('Error: ' + err.message, 'error'); })
+      .getRecentSubmissions(filters);
+  }
+
+  function populateCircleFilter(rows) {
+    var sel = document.getElementById('rf_circle');
+    if (!sel) return;
+    var seen = {}, opts = '<option value="">All Circles</option>';
+    rows.forEach(function(r) {
+      if (r.circle_name && !seen[r.circle_name]) { seen[r.circle_name] = 1; opts += '<option value="' + r.circle_name + '">' + r.circle_name + '</option>'; }
+    });
+    var cur = sel.value;
+    sel.innerHTML = opts;
+    sel.value = cur;
+  }
+
+  function populateDivisionFilter(rows) {
+    var sel = document.getElementById('rf_division');
+    if (!sel) return;
+    var seen = {}, opts = '<option value="">All Divisions</option>';
+    rows.forEach(function(r) {
+      if (r.division_name && !seen[r.division_name]) { seen[r.division_name] = 1; opts += '<option value="' + r.division_name + '">' + r.division_name + '</option>'; }
+    });
+    var cur = sel.value;
+    sel.innerHTML = opts;
+    sel.value = cur;
+  }
+
+  function renderRecentTable() {
+    var tbody = document.getElementById('recent_tbody');
+    if (!tbody) return;
+    var start = (recentPage - 1) * recentPageSz;
+    var page  = recentData.slice(start, start + recentPageSz);
+
+    if (!page.length) {
+      tbody.innerHTML = '<tr><td colspan="11" class="table-empty">No records found.</td></tr>';
+      renderPagination(0);
+      return;
+    }
+
+    var flagClass = { SERVICED: 'flag-eligible', ELIGIBLE: 'flag-eligible', OVERSIZED: 'flag-oversized', 'NOT-ELIGIBLE': 'flag-oversized', '': 'flag-form2' };
+
+    var rows = page.map(function(r) {
+      var fc = flagClass[r.entry_flag] || 'flag-form2';
+      return '<tr>' +
+        '<td><code style="font-size:.75rem">' + r.record_id + '</code></td>' +
+        '<td><span class="badge-flag ' + (r.form === 'FORM1' ? 'kpi-accent-blue' : 'flag-form2') + '" style="padding:.1rem .4rem;font-size:.7rem">' + (r.form === 'FORM1' ? 'F1' : 'F2') + '</span></td>' +
+        '<td>' + r.officer_name + '</td>' +
+        '<td>' + r.circle_name + '</td>' +
+        '<td>' + r.division_name + '</td>' +
+        '<td>' + r.district + '</td>' +
+        '<td>' + (r.app_no || '—') + '</td>' +
+        '<td>' + (r.no_of_floors || '—') + '</td>' +
+        '<td>' + (r.no_of_connections || '—') + '</td>' +
+        '<td>' + (r.entry_flag ? '<span class="badge-flag ' + fc + '">' + r.entry_flag.replace('_',' ') + '</span>' : '—') + '</td>' +
+        '<td style="white-space:nowrap">' + (r.date_display || '') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    tbody.innerHTML = rows;
+    renderPagination(recentData.length);
+  }
+
+  function renderPagination(total) {
+    var container = document.getElementById('recent_pagination');
+    if (!container) return;
+    var totalPages = Math.max(1, Math.ceil(total / recentPageSz));
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+
+    var html = '<span class="page-info">Page ' + recentPage + ' of ' + totalPages + '</span>';
+    html += '<button class="page-btn" onclick="DASH.goPage(' + (recentPage-1) + ')" ' + (recentPage<=1?'disabled':'') + '>‹</button>';
+    var start = Math.max(1, recentPage-2), end = Math.min(totalPages, recentPage+2);
+    for (var i = start; i <= end; i++) {
+      html += '<button class="page-btn' + (i===recentPage?' active':'') + '" onclick="DASH.goPage('+i+')">' + i + '</button>';
+    }
+    html += '<button class="page-btn" onclick="DASH.goPage(' + (recentPage+1) + ')" ' + (recentPage>=totalPages?'disabled':'') + '>›</button>';
+    container.innerHTML = html;
+  }
+
+  function goPage(n) {
+    var total = recentData.length;
+    var totalPages = Math.max(1, Math.ceil(total / recentPageSz));
+    recentPage = Math.max(1, Math.min(n, totalPages));
+    renderRecentTable();
+  }
+
+  function clearFilters() {
+    var f = document.getElementById('rf_form');
+    var c = document.getElementById('rf_circle');
+    var d = document.getElementById('rf_division');
+    if (f) f.value = 'all';
+    if (c) c.value = '';
+    if (d) d.value = '';
+    var df = document.getElementById('dash_date_from');
+    var dt = document.getElementById('dash_date_to');
+    if (df) df.value = '';
+    if (dt) dt.value = '';
+    dateFilter.from = '';
+    dateFilter.to   = '';
+    refresh('FORM1');
+    refresh('FORM2');
+    loadRecent();
+  }
+
+  function applyDateFilter() {
+    var df = document.getElementById('dash_date_from');
+    var dt = document.getElementById('dash_date_to');
+    dateFilter.from = df && df.value ? df.value : '';
+    dateFilter.to   = dt && dt.value ? dt.value : '';
+    refresh('FORM1');
+    refresh('FORM2');
+    loadRecent();
+  }
+
+  function clearDateFilter() {
+    var df = document.getElementById('dash_date_from');
+    var dt = document.getElementById('dash_date_to');
+    if (df) df.value = '';
+    if (dt) dt.value = '';
+    dateFilter.from = '';
+    dateFilter.to   = '';
+    refresh('FORM1');
+    refresh('FORM2');
+    loadRecent();
+  }
+
+  // ── public API ────────────────────────────────────────────────────────────
+  return {
+    boot:           boot,
+    switchSub:      switchSub,
+    refresh:        refresh,
+    renderGeoChart: renderGeoChart,
+    renderAppRegChart: renderAppRegChart,
+    loadRecent:     loadRecent,
+    clearFilters:   clearFilters,
+    applyDateFilter: applyDateFilter,
+    clearDateFilter: clearDateFilter,
+    goPage:         goPage
+  };
+})();
+
+</script>
+

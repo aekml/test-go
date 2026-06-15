@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>G.O Compliance</title>
+  <?!= include('Styles'); ?>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- Global loader & toast -->
+<div id="globalloader" class="global-loader hidden">Loading…</div>
+<div id="toast" class="toast hidden"></div>
+
+<!-- Home / Main Menu -->
+<div id="tab_home" class="tab-panel">
+  <div class="home-wrap">
+    <div class="home-hero card">
+      <div class="home-hero-top">
+        <div>
+          <h1 class="home-title">G.O Compliance for order dated 05.06.2026 (RESIDENTIAL BUILDINGS)</h1>
+          <p class="home-subtitle">Manage service progress, surveys, reviews, and dashboard access.</p>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="APP.switchTab('home')">Exit</button>
+      </div>
+    </div>
+    <div class="home-grid">
+      <button class="home-card" onclick="APP.switchTab('form1')">
+        <span class="home-card-kicker">Form 1</span>
+        <span class="home-card-title">Service Progress</span>
+        <span class="home-card-text">Capture application and service progress details for residential premises.</span>
+        <span class="home-card-cta">Open Form 1 →</span>
+      </button>
+      <button class="home-card" onclick="APP.switchTab('form2')">
+        <span class="home-card-kicker">Form 2</span>
+        <span class="home-card-title">Survey</span>
+        <span class="home-card-text">Capture survey details including plot category, floors, and temporary connection data (for Residential / Mixed Load).</span>
+        <span class="home-card-cta">Open Form 2 →</span>
+      </button>
+      <button class="home-card" onclick="APP.switchTab('review')">
+        <span class="home-card-kicker">Queue</span>
+        <span class="home-card-title">Review Queue</span>
+        <span class="home-card-text">Review submitted records and continue validation or action workflows.</span>
+        <span class="home-card-cta">Open Review Queue →</span>
+      </button>
+      <button class="home-card" onclick="APP.openDashboard()">
+        <span class="home-card-kicker">Insights</span>
+        <span class="home-card-title">Dashboard</span>
+        <span class="home-card-text">View KPIs, charts, and recent submissions across forms.</span>
+        <span class="home-card-cta">Open Dashboard →</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     FORM 1 TAB
+════════════════════════════════════════════════════════════════ -->
+<div id="tab_form1" class="tab-panel hidden">
+<div class="form-wrap">
+<div class="module-topbar"><button class="btn btn-ghost btn-sm" onclick="APP.switchTab('home')">← Back to Home</button></div>
+
+  <!-- ── S1 — SECTIONS 1, 2, 3 ──────────────────────────────────────── -->
+  <div id="s1" class="f1-section card">
+    <h2 class="section-title">Officer &amp; Location Details</h2>
+    <p  class="section-sub">Sections 1, 2 &amp; 3 — these will be locked after you continue.</p>
+
+    <!-- Section 1 — Officer -->
+    <fieldset class="fieldset">
+      <legend>Section 1 — Officer</legend>
+      <div class="field-row">
+        <label for="f1_officer_name">Officer Designation <span class="req">*</span></label>
+        <input id="f1_officer_name" type="text" placeholder="Designation">
+      </div>
+      <div class="field-row">
+        <label for="f1_officer_phone">Phone Number <span class="req">*</span></label>
+        <input id="f1_officer_phone" type="tel" placeholder="10-digit mobile">
+      </div>
+    </fieldset>
+
+    <!-- Section 2 — BESCOM Hierarchy -->
+    <fieldset class="fieldset">
+      <legend>Section 2 — BESCOM Hierarchy</legend>
+      <div class="field-row">
+        <label for="f1_subdivision">Subdivision <span class="req">*</span></label>
+        <select id="f1_subdivision" onchange="APP.onSubdivisionChange()">
+          <option value="">— Select Subdivision —</option>
+        </select>
+      </div>
+      <div class="field-row readonly-row">
+        <label>Division</label>
+        <input id="f1_division" type="text" readonly placeholder="Auto-filled">
+      </div>
+      <div class="field-row readonly-row">
+        <label>Circle</label>
+        <input id="f1_circle" type="text" readonly placeholder="Auto-filled">
+      </div>
+      <div class="field-row readonly-row">
+        <label>Zone</label>
+        <input id="f1_zone" type="text" readonly placeholder="Auto-filled">
+      </div>
+    </fieldset>
+
+    <!-- Section 3 — Location -->
+    <fieldset class="fieldset">
+      <legend>Section 3 — Location</legend>
+      <div class="field-row">
+        <label for="f1_district">District <span class="req">*</span></label>
+        <select id="f1_district" onchange="APP.onDistrictChange()">
+          <option value="">— Select District —</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <label for="f1_taluk">Taluk <span class="req">*</span></label>
+        <select id="f1_taluk">
+          <option value="">— Select Taluk —</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <label for="f1_region_type">Region Type <span class="req">*</span></label>
+        <select id="f1_region_type" onchange="APP.onRegionTypeChange()">
+          <option value="">— Select —</option>
+          <option value="ULB">ULB — Urban Local Body</option>
+          <option value="RLB">RLB — Rural Local Body</option>
+        </select>
+      </div>
+    </fieldset>
+
+    <div class="action-row">
+      <button id="btn_confirm_shared" class="btn btn-primary" onclick="APP.confirmSharedData()">Continue to Gate 1 →</button>
+    </div>
+  </div><!-- #s1 -->
+
+  <!-- ── GATE 1 — Plot Size Check ──────────────────────────────────────── -->
+  <div id="s_gate1" class="f1-section card hidden">
+    <div class="back-row">
+      <button class="btn btn-ghost btn-sm" onclick="APP.backFromGate1()">← Back to Officer &amp; Location</button>
+    </div>
+    <h2 class="gate-title">Gate 1 — Plot Size Check</h2>
+    <p class="gate-question">Confirm if the <strong>plot area</strong> is within 2880 sq ft eligibility.</p>
+    <div class="field-row gate-inline">
+      <select id="f1_gate1_sel" class="form-select">
+        <option value="">— Select —</option>
+        <option value="yes">Yes — Plot area is ≤ 2880 sq ft</option>
+        <option value="no">No — Plot area is above 2880 sq ft</option>
+      </select>
+      <button class="btn btn-primary" onclick="APP.onGate1Proceed()">Confirm &amp; Proceed →</button>
+    </div>
+  </div><!-- #s_gate1 -->
+
+  <!-- ── ENTRY LOOP ─────────────────────────────────────────────────── -->
+  <div id="s_entry" class="f1-section card hidden">
+    <div class="back-row">
+      <button id="btn_back_entry" class="btn btn-ghost btn-sm" onclick="APP.backInEntry()">← Back</button>
+    </div>
+    <h2 id="entry_counter" class="section-title">Application Entry 1</h2>
+    <p  id="entry_hint"    class="section-sub">Sections 1–3 locked. Fill details for this application.</p>
+
+    <!-- Section 4 — Application & Service Details (merged) -->
+    <div id="panel_sec4">
+      <fieldset class="fieldset">
+        <legend>Application Details</legend>
+        <div class="field-row">
+          <label for="f1_app_no">Application Number <span class="req">*</span></label>
+          <input id="f1_app_no" type="text" inputmode="numeric" maxlength="12" placeholder="e.g. 000123456789">
+        </div>
+        <div class="field-row">
+          <label for="f1_app_date">Application Date <span class="req">*</span></label>
+          <input id="f1_app_date" type="date" max="2026-05-31">
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>Service Details</legend>
+        <div class="field-row">
+          <label for="f1_no_of_floors">No. of Floors <span class="req">*</span></label>
+          <select id="f1_no_of_floors" class="form-select">
+            <option value="">— Select Floors —</option>
+            <option value="Ground">Ground</option>
+            <option value="G+1">G+1</option>
+            <option value="G+2">G+2</option>
+            <option value="G+3">G+3</option>
+            <option value="G+4">G+4</option>
+            <option value="S+1">S+1</option>
+            <option value="S+2">S+2</option>
+            <option value="S+3">S+3</option>
+            <option value="S+4">S+4</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label for="f1_plot_sqft">Plot Area (sq ft) <span class="req">*</span></label>
+          <input id="f1_plot_sqft" type="number" min="1" placeholder="Enter numeric value">
+        </div>
+        <div class="field-row">
+          <label for="f1_no_of_connections">No. of Connections <span class="req">*</span></label>
+          <input id="f1_no_of_connections" type="number" min="1">
+        </div>
+        <div class="field-row">
+          <label for="f1_total_kw">Total Sanctioned kW</label>
+          <input id="f1_total_kw" type="number" min="0" step="0.1">
+        </div>
+        <div class="field-row">
+          <label for="f1_date_of_service">Date of Service <span class="req">*</span></label>
+          <input id="f1_date_of_service" type="date" min="2026-06-06" max="<?= Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd') ?>">
+          <small class="field-hint">Minimum allowed date: 06.06.2026.</small>
+        </div>
+        <div class="field-row">
+          <label for="f1_any_other_info">Any Other Info</label>
+          <textarea id="f1_any_other_info" rows="2" placeholder="Optional remarks"></textarea>
+        </div>
+      </fieldset>
+
+      <div class="action-row">
+        <p id="entry_validation_hint" class="validation-hint hidden"></p>
+        <button class="btn btn-primary" onclick="APP.onSection5Submit()">Save Entry ✓</button>
+      </div>
+    </div>
+  </div><!-- #s_entry -->
+
+  <!-- ── AFTER-ENTRY SCREEN ─────────────────────────────────────────── -->
+  <div id="s_after_entry" class="f1-section card hidden">
+    <h2 class="section-title">Saved Entries</h2>
+    <p  class="section-sub">Review or edit any entry before submitting the batch.</p>
+    <div id="entry_list" class="entry-list"></div>
+    <div class="action-row after-entry-actions">
+      <button class="btn btn-secondary" onclick="APP.addAnotherEntry()">+ Add Another Entry</button>
+      <button class="btn btn-primary"   onclick="APP.submitAll()">Submit All →</button>
+    </div>
+  </div><!-- #s_after_entry -->
+
+</div><!-- .form-wrap -->
+</div><!-- #tab_form1 -->
+
+<!-- ═══════════════════════════════════════════════════════════════
+     FORM 2 TAB
+════════════════════════════════════════════════════════════════ -->
+<div id="tab_form2" class="tab-panel hidden">
+<div class="form-wrap">
+<div class="module-topbar"><button class="btn btn-ghost btn-sm" onclick="APP.switchTab('home')">← Back to Home</button></div>
+
+  <!-- F2 S1 — Officer & Location -->
+  <div id="f2_s1" class="f2-section card">
+    <h2 class="section-title">Officer &amp; Location Details</h2>
+    <p  class="section-sub">These details will be locked after you continue.</p>
+
+    <fieldset class="fieldset">
+      <legend>Section 1 — Officer</legend>
+      <div class="field-row">
+        <label for="f2_officer_name">Officer Designation <span class="req">*</span></label>
+        <input id="f2_officer_name" type="text" placeholder="Designation">
+      </div>
+      <div class="field-row">
+        <label for="f2_officer_phone">Phone Number <span class="req">*</span></label>
+        <input id="f2_officer_phone" type="tel" placeholder="10-digit mobile">
+      </div>
+    </fieldset>
+
+    <fieldset class="fieldset">
+      <legend>Section 2 — BESCOM Hierarchy</legend>
+      <div class="field-row">
+        <label for="f2_subdivision">Subdivision <span class="req">*</span></label>
+        <select id="f2_subdivision" onchange="APP2.onSubdivisionChange()">
+          <option value="">— Select Subdivision —</option>
+        </select>
+      </div>
+      <div class="field-row readonly-row">
+        <label>Division</label>
+        <input id="f2_division" type="text" readonly placeholder="Auto-filled">
+      </div>
+      <div class="field-row readonly-row">
+        <label>Circle</label>
+        <input id="f2_circle" type="text" readonly placeholder="Auto-filled">
+      </div>
+      <div class="field-row readonly-row">
+        <label>Zone</label>
+        <input id="f2_zone" type="text" readonly placeholder="Auto-filled">
+      </div>
+    </fieldset>
+
+    <fieldset class="fieldset">
+      <legend>Section 3 — Location</legend>
+      <div class="field-row">
+        <label for="f2_district">District <span class="req">*</span></label>
+        <select id="f2_district" onchange="APP2.onDistrictChange()">
+          <option value="">— Select District —</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <label for="f2_taluk">Taluk <span class="req">*</span></label>
+        <select id="f2_taluk">
+          <option value="">— Select Taluk —</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <label for="f2_region_type">Region Type <span class="req">*</span></label>
+        <select id="f2_region_type" onchange="APP2.onRegionTypeChange()">
+          <option value="">— Select —</option>
+          <option value="ULB">ULB — Urban Local Body</option>
+          <option value="RLB">RLB — Rural Local Body</option>
+        </select>
+      </div>
+    </fieldset>
+
+    <div class="action-row">
+      <button id="f2_btn_confirm_shared" class="btn btn-primary" onclick="APP2.confirmSharedData()">Continue to Section 4 →</button>
+    </div>
+  </div><!-- #f2_s1 -->
+
+  <!-- F2 S4 — Plot & Premises -->
+  <div id="f2_s4" class="f2-section card hidden">
+    <div class="back-row">
+      <button class="btn btn-ghost btn-sm" onclick="APP2.backToS1()">← Back to Officer &amp; Location</button>
+    </div>
+    <h2 class="section-title">Section 4 — Plot &amp; Premises Details</h2>
+
+    <fieldset class="fieldset">
+      <legend>Plot Details</legend>
+      <div class="field-row">
+        <label for="f2_plot_category">Plot Category <span class="req">*</span></label>
+        <select id="f2_plot_category" onchange="APP2.onPlotCategoryChange()">
+          <option value="">— Select Category —</option>
+          <option value="upto_2880">Up to 2880 sq ft</option>
+          <option value="2881_to_4000">2881 – 4000 sq ft</option>
+          <option value="beyond_4000">Beyond 4000 sq ft</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <label for="f2_plot_sqft">Plot Area (sq ft) <span class="req">*</span></label>
+        <input id="f2_plot_sqft" type="number" min="1" placeholder="Enter numeric value">
+        <span id="f2_plot_sqft_hint" class="field-hint"></span>
+      </div>
+      <div class="field-row">
+        <label for="f2_no_of_floors">No. of Floors <span class="req">*</span></label>
+        <select id="f2_no_of_floors" class="form-select" onchange="APP2.updateEligibilityHint()">
+          <option value="">— Select —</option>
+          <option value="Ground">Ground</option>
+          <option value="G+1">G+1</option>
+          <option value="G+2">G+2</option>
+          <option value="G+3">G+3</option>
+          <option value="G+4">G+4</option>
+          <option value="G+5">G+5</option>
+          <option value="G+6">G+6</option>
+          <option value="G+7">G+7</option>
+          <option value="G+8">G+8</option>
+          <option value="G+9">G+9</option>
+          <option value="S+1">S+1</option>
+          <option value="S+2">S+2</option>
+          <option value="S+3">S+3</option>
+          <option value="S+4">S+4</option>
+          <option value="S+5">S+5</option>
+          <option value="S+6">S+6</option>
+          <option value="S+7">S+7</option>
+          <option value="S+8">S+8</option>
+          <option value="S+9">S+9</option>
+          <option value="S+10">S+10</option>
+        </select>
+      </div>
+      <div class="field-row"><span id="f2_elig_hint" class="field-hint"></span></div>
+      <div id="f2_conn_load_wrap" class="hidden">
+        <div class="field-row">
+          <label for="f2_expected_connections">Expected No. of Connections <span class="req">*</span></label>
+          <input id="f2_expected_connections" type="number" min="1" placeholder="e.g. 4">
+        </div>
+        <div class="field-row">
+          <label for="f2_expected_load_kw">Expected Permanent Load (kW) <span class="req">*</span></label>
+          <input id="f2_expected_load_kw" type="number" min="0" step="0.1" placeholder="e.g. 10.5">
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="action-row">
+      <button class="btn btn-primary" onclick="APP2.goToS5()">Continue to Section 5 →</button>
+    </div>
+  </div><!-- #f2_s4 -->
+
+  <!-- F2 S5 — Connection & Occupancy -->
+  <div id="f2_s5" class="f2-section card hidden">
+    <div class="back-row">
+      <button class="btn btn-ghost btn-sm" onclick="APP2.backToS4()">← Back to Plot &amp; Premises</button>
+    </div>
+    <h2 class="section-title">Section 5 — Connection &amp; Occupancy Status</h2>
+
+    <fieldset class="fieldset">
+      <legend>Temporary Connection</legend>
+      <div class="field-row">
+        <label>Applied for Temporary Connection? <span class="req">*</span></label>
+        <div class="radio-group">
+          <label class="radio-label"><input type="radio" name="f2_temp_conn" value="Yes" onchange="APP2.onTempConnChange()"> Yes</label>
+          <label class="radio-label"><input type="radio" name="f2_temp_conn" value="No"  onchange="APP2.onTempConnChange()"> No</label>
+        </div>
+      </div>
+      <div id="f2_temp_details" class="hidden">
+        <div class="field-row">
+          <label for="f2_temp_account_id">Account ID <span class="req">*</span></label>
+          <input id="f2_temp_account_id" type="text" placeholder="e.g. TEMP-2024-001">
+        </div>
+        <div class="field-row">
+          <label for="f2_app_reg_date">Application Registration Date <span class="req">*</span></label>
+          <input id="f2_app_reg_date" type="date" max="2026-05-31">
+          <span class="field-hint">Max: 31-May-2026</span>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset class="fieldset">
+      <legend>Occupancy</legend>
+      <div class="field-row">
+        <label>Is the building ready to be occupied? <span class="req">*</span></label>
+        <div class="radio-group">
+          <label class="radio-label"><input type="radio" name="f2_bldg_ready" value="Yes"> Yes</label>
+          <label class="radio-label"><input type="radio" name="f2_bldg_ready" value="No">  No</label>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset class="fieldset">
+      <legend>Remarks</legend>
+      <div class="field-row">
+        <label for="f2_remarks">Remarks</label>
+        <textarea id="f2_remarks" rows="2" placeholder="Optional remarks"></textarea>
+      </div>
+    </fieldset>
+
+    <div class="action-row">
+      <p id="f2_entry_validation_hint" class="validation-hint hidden"></p>
+      <button id="f2_btn_save_entry" class="btn btn-primary" onclick="APP2.saveEntry()">Save Entry ✓</button>
+    </div>
+  </div><!-- #f2_s5 -->
+
+  <div id="f2_after_entry" class="f2-section card hidden">
+    <h2 class="section-title">Saved Survey Entries</h2>
+    <p class="section-sub">Review or edit any entry before submitting the batch.</p>
+    <div id="f2_entry_list" class="entry-list"></div>
+    <div class="action-row after-entry-actions">
+      <button class="btn btn-secondary" onclick="APP2.addAnotherEntry()">+ Add Another Entry</button>
+      <button class="btn btn-primary" onclick="APP2.submitAll()">Submit All →</button>
+    </div>
+  </div><!-- #f2_after_entry -->
+
+</div><!-- .form-wrap -->
+</div><!-- #tab_form2 -->
+
+<!-- ═══════════════════════════════════════════════════════════════
+     REVIEW QUEUE TAB
+════════════════════════════════════════════════════════════════ -->
+<div id="tab_review" class="tab-panel hidden">
+<div class="module-topbar"><button class="btn btn-ghost btn-sm" onclick="APP.switchTab('home')">← Back to Home</button></div>
+  <div class="form-wrap">
+    <div class="card">
+      <h2 class="section-title">Review Queue</h2>
+      <p class="section-sub">Coming soon.</p>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     DASHBOARD TAB
+════════════════════════════════════════════════════════════════ -->
+<div id="tab_dash" class="tab-panel hidden">
+<div class="module-topbar"><button class="btn btn-ghost btn-sm" onclick="APP.switchTab('home')">← Back to Home</button></div>
+
+  <div class="dash-date-filters">
+    <label>Serviced Date From
+      <input type="date" id="dash_date_from">
+    </label>
+    <label>To
+      <input type="date" id="dash_date_to">
+    </label>
+    <button class="btn btn-sm btn-primary" onclick="DASH.applyDateFilter()">Apply</button>
+    <button class="btn btn-sm btn-ghost" onclick="DASH.clearDateFilter()">Clear</button>
+  </div>
+
+
+  <!-- ── Inner sub-tabs ── -->
+  <nav class="dash-subtab-bar">
+    <button class="dash-subtab active" data-dash="f1" onclick="DASH.switchSub('f1')">Form 1 — Service Progress</button>
+    <button class="dash-subtab"        data-dash="f2" onclick="DASH.switchSub('f2')">Form 2 — Survey</button>
+    <button class="dash-subtab"        data-dash="recent" onclick="DASH.switchSub('recent')">Recent Submissions</button>
+  </nav>
+
+  <!-- ── Sub-tab F1 ── -->
+  <div id="dash_f1" class="dash-sub">
+    <div class="dash-toolbar">
+      <span class="dash-title">Form 1 — Service Progress</span>
+      <button class="btn btn-sm btn-ghost" onclick="DASH.refresh('FORM1')">⟳ Refresh</button>
+      <span id="dash_f1_updated" class="dash-updated"></span>
+    </div>
+    <div id="dash_f1_kpi" class="kpi-grid dash-skeleton-wrap">
+      <div class="kpi-skeleton"></div><div class="kpi-skeleton"></div>
+      <div class="kpi-skeleton"></div><div class="kpi-skeleton"></div>
+      <div class="kpi-skeleton"></div>
+    </div>
+    <div class="chart-section">
+      <div class="chart-card">
+        <div class="chart-card-head">
+          <span class="chart-card-title">Geography Breakdown</span>
+          <select class="chart-select" id="f1_geo_sel" onchange="DASH.renderGeoChart('FORM1')">
+            <option value="zone">By Zone</option>
+            <option value="circle">By Circle</option>
+            <option value="division">By Division</option>
+            <option value="subdivision">By Subdivision</option>
+          </select>
+        </div>
+        <div class="chart-wrap"><canvas id="f1_geo_chart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-head"><span class="chart-card-title">Region Type Split</span></div>
+        <div class="chart-wrap chart-wrap-sm"><canvas id="f1_region_chart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Sub-tab F2 ── -->
+  <div id="dash_f2" class="dash-sub hidden">
+    <div class="dash-toolbar">
+      <span class="dash-title">Form 2 — Survey</span>
+      <button class="btn btn-sm btn-ghost" onclick="DASH.refresh('FORM2')">⟳ Refresh</button>
+      <span id="dash_f2_updated" class="dash-updated"></span>
+    </div>
+    <div id="dash_f2_kpi" class="kpi-grid dash-skeleton-wrap">
+      <div class="kpi-skeleton"></div><div class="kpi-skeleton"></div>
+      <div class="kpi-skeleton"></div><div class="kpi-skeleton"></div>
+      <div class="kpi-skeleton"></div>
+    </div>
+    <div class="chart-section">
+      <div class="chart-card">
+        <div class="chart-card-head">
+          <span class="chart-card-title">Geography Breakdown</span>
+          <select class="chart-select" id="f2_geo_sel" onchange="DASH.renderGeoChart('FORM2')">
+            <option value="zone">By Zone</option>
+            <option value="circle">By Circle</option>
+            <option value="division">By Division</option>
+            <option value="subdivision">By Subdivision</option>
+          </select>
+        </div>
+        <div class="chart-wrap"><canvas id="f2_geo_chart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-head"><span class="chart-card-title">Plot Category Breakdown</span></div>
+        <div class="chart-wrap chart-wrap-sm"><canvas id="f2_plotcat_chart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-head"><span class="chart-card-title">Region Type Split</span></div>
+        <div class="chart-wrap chart-wrap-sm"><canvas id="f2_region_chart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-head"><span class="chart-card-title">Eligibility Flag Breakdown</span></div>
+        <div class="chart-wrap chart-wrap-sm"><canvas id="f2_elig_chart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-head"><span class="chart-card-title">Temporary Connections (Yes / No)</span></div>
+        <div class="chart-wrap chart-wrap-sm"><canvas id="f2_tempconn_chart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Sub-tab Recent ── -->
+  <div id="dash_recent" class="dash-sub hidden">
+    <div class="dash-toolbar">
+      <span class="dash-title">Recent Submissions <span id="dash_recent_count" class="dash-count"></span></span>
+      <button class="btn btn-sm btn-ghost" onclick="DASH.loadRecent()">⟳ Refresh</button>
+    </div>
+    <div class="recent-filters">
+      <select id="rf_form" onchange="DASH.loadRecent()">
+        <option value="all">All Forms</option>
+        <option value="form1">Form 1</option>
+        <option value="form2">Form 2</option>
+      </select>
+      <select id="rf_circle" onchange="DASH.loadRecent()">
+        <option value="">All Circles</option>
+      </select>
+      <select id="rf_division" onchange="DASH.loadRecent()">
+        <option value="">All Divisions</option>
+      </select>
+      <button class="btn btn-sm btn-ghost" onclick="DASH.clearFilters()">Clear</button>
+    </div>
+    <div class="recent-table-wrap">
+      <table class="recent-table" id="recent_table">
+        <thead>
+          <tr>
+            <th>Record ID</th>
+            <th>Form</th>
+            <th>Submitted At</th>
+            <th>Submitted By</th>
+            <th>Officer</th>
+            <th>Circle</th>
+            <th>Division</th>
+            <th>Subdivision</th>
+            <th>District</th>
+            <th>Taluk</th>
+            <th>Region Type</th>
+            <th>Reference ID</th>
+            <th>Plot Category</th>
+            <th>Plot Area (sq ft)</th>
+            <th>Temp Conn</th>
+            <th>Eligibility</th>
+            <th>Workflow</th>
+            <th>Remarks</th>
+          </tr>
+        </thead>
+        <tbody id="recent_tbody">
+          <tr><td colspan="18" class="table-empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" id="recent_pagination"></div>
+  </div>
+
+</div><!-- #tab_dash -->
+
+<?!= include('Scripts'); ?>
+</body>
+</html>
